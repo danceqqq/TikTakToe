@@ -4,6 +4,7 @@ import socket
 import threading
 import json
 import os
+import random
 from urllib.request import urlopen
 from io import BytesIO
 
@@ -67,7 +68,19 @@ def load_avatar(url):
         print(f"Ошибка загрузки аватарки: {e}")
         return None
 
+def draw_avatar(x, y, avatar, default_color):
+    if avatar:
+        avatar = pygame.transform.scale(avatar, (50, 50))
+        pygame.draw.circle(screen, default_color, (x + 25, y + 25), 25)
+        screen.blit(avatar, (x, y))
+    else:
+        pygame.draw.circle(screen, default_color, (x + 25, y + 25), 25)
+
 avatar_image = load_avatar(player_data["avatar_url"])
+if not avatar_image:
+    avatar_color = random.choice([(255, 0, 0), (0, 255, 0), (0, 0, 255)])
+else:
+    avatar_color = (255, 255, 255)
 
 def draw_lines():
     pygame.draw.line(screen, LINE_COLOR, (0, SQUARE_SIZE), (WIDTH, SQUARE_SIZE), LINE_WIDTH)
@@ -124,12 +137,10 @@ def main_menu():
     text_rating = font.render(f'Рейтинг: {player_data["rating"]} 🏆', True, LINE_COLOR)
 
     screen.fill(BG_COLOR)
+    draw_avatar(WIDTH//2 - 25, 10, avatar_image, avatar_color)
     screen.blit(text_single, (50, 100))
     screen.blit(text_online, (50, 150))
     screen.blit(text_rating, (50, 200))
-
-    if avatar_image:
-        screen.blit(avatar_image, (125, 250))
     pygame.display.update()
 
     while True:
@@ -143,7 +154,7 @@ def main_menu():
                 elif event.key == pygame.K_2:
                     return 'online'
             if event.type == pygame.MOUSEBUTTONDOWN:
-                if avatar_image and pygame.Rect(125, 250, 50, 50).collidepoint(event.pos):
+                if pygame.Rect(WIDTH//2 - 25, 10, 50, 50).collidepoint(event.pos):
                     avatar_url = input_avatar_url()
                     if avatar_url:
                         player_data["avatar_url"] = avatar_url
@@ -224,6 +235,13 @@ def single_player_game():
                 if event.key == pygame.K_r:
                     restart_game()
                     game_over = False
+                if event.key == pygame.K_m and game_over:
+                    return
+
+        if game_over:
+            font = pygame.font.Font(None, 36)
+            text_menu = font.render('Нажмите M для меню', True, WIN_LINE_COLOR)
+            screen.blit(text_menu, (50, HEIGHT - 40))
 
         pygame.display.update()
 
@@ -360,22 +378,27 @@ def play_online_game(opponent_ip):
                     restart_game()
                     game_over = False
                     my_turn = player == 'X'
+                if event.key == pygame.K_m and game_over:
+                    return
 
         screen.fill(BG_COLOR)
         draw_lines()
         draw_figures()
 
         # Отображение аватарок и рейтинга
-        if avatar_image:
-            screen.blit(avatar_image, (10, HEIGHT - 40))
+        draw_avatar(10, 10, avatar_image, avatar_color)
         if opponent_avatar:
-            screen.blit(opponent_avatar, (WIDTH - 60, HEIGHT - 40))
+            draw_avatar(WIDTH - 60, 10, opponent_avatar, (255, 255, 255))
 
         font = pygame.font.Font(None, 24)
         my_rating_text = font.render(f"{player_data['rating']} 🏆", True, LINE_COLOR)
-        screen.blit(my_rating_text, (70, HEIGHT - 30))
+        screen.blit(my_rating_text, (10, 70))
         opponent_rating_text = font.render(f"{opponent_data['rating']} 🏆", True, LINE_COLOR)
-        screen.blit(opponent_rating_text, (WIDTH - 120, HEIGHT - 30))
+        screen.blit(opponent_rating_text, (WIDTH - 70, 70))
+
+        turn_text = "Твой ход" if my_turn else "Ход оппонента"
+        turn_surface = font.render(turn_text, True, LINE_COLOR)
+        screen.blit(turn_surface, (WIDTH//2 - turn_surface.get_width()//2, 40))
 
         pygame.display.update()
 
