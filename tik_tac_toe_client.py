@@ -2,6 +2,10 @@ import pygame
 import sys
 import socket
 import threading
+import json
+import os
+from urllib.request import urlopen
+from io import BytesIO
 
 # Инициализация Pygame
 pygame.init()
@@ -35,6 +39,35 @@ board = [[None]*BOARD_COLS for _ in range(BOARD_ROWS)]
 HOST = ''
 PORT = 12345
 BUFFER_SIZE = 1024
+
+# Путь к файлу данных
+DATA_FILE = "player_data.json"
+
+# Загрузка и сохранение данных
+def load_data():
+    if os.path.exists(DATA_FILE):
+        with open(DATA_FILE, "r") as f:
+            return json.load(f)
+    return {"avatar_url": "", "rating": 100}
+
+def save_data(data):
+    with open(DATA_FILE, "w") as f:
+        json.dump(data, f)
+
+player_data = load_data()
+
+# Загрузка аватарки
+def load_avatar(url):
+    try:
+        image_str = urlopen(url).read()
+        image_file = BytesIO(image_str)
+        avatar = pygame.image.load(image_file)
+        return pygame.transform.scale(avatar, (50, 50))
+    except Exception as e:
+        print(f"Ошибка загрузки аватарки: {e}")
+        return None
+
+avatar_image = load_avatar(player_data["avatar_url"])
 
 def draw_lines():
     pygame.draw.line(screen, LINE_COLOR, (0, SQUARE_SIZE), (WIDTH, SQUARE_SIZE), LINE_WIDTH)
@@ -84,14 +117,19 @@ def restart_game():
             board[row][col] = None
 
 def main_menu():
+    global avatar_image
     font = pygame.font.Font(None, 36)
     text_single = font.render('1. Одиночная игра', True, LINE_COLOR)
     text_online = font.render('2. Онлайн-игра', True, LINE_COLOR)
+    text_rating = font.render(f'Рейтинг: {player_data["rating"]} 🏆', True, LINE_COLOR)
 
     screen.fill(BG_COLOR)
     screen.blit(text_single, (50, 100))
     screen.blit(text_online, (50, 150))
+    screen.blit(text_rating, (50, 200))
 
+    if avatar_image:
+        screen.blit(avatar_image, (125, 250))
     pygame.display.update()
 
     while True:
@@ -104,6 +142,53 @@ def main_menu():
                     return 'single'
                 elif event.key == pygame.K_2:
                     return 'online'
+            if event.type == pygame.MOUSEBUTTONDOWN:
+                if avatar_image and pygame.Rect(125, 250, 50, 50).collidepoint(event.pos):
+                    avatar_url = input_avatar_url()
+                    if avatar_url:
+                        player_data["avatar_url"] = avatar_url
+                        avatar_image = load_avatar(avatar_url)
+                        save_data(player_data)
+
+def input_avatar_url():
+    font = pygame.font.Font(None, 36)
+    input_box = pygame.Rect(50, 100, 200, 50)
+    color_inactive = pygame.Color('lightskyblue3')
+    color_active = pygame.Color('dodgerblue2')
+    color = color_inactive
+    active = False
+    text = ''
+    done = False
+
+    while not done:
+        for event in pygame.event.get():
+            if event.type == pygame.QUIT:
+                pygame.quit()
+                sys.exit()
+            if event.type == pygame.MOUSEBUTTONDOWN:
+                if input_box.collidepoint(event.pos):
+                    active = not active
+                else:
+                    active = False
+                color = color_active if active else color_inactive
+
+            if event.type == pygame.KEYDOWN:
+                if active:
+                    if event.key == pygame.K_RETURN:
+                        return text
+                    elif event.key == pygame.K_BACKSPACE:
+                        text = text[:-1]
+                    else:
+                        text += event.unicode
+
+        screen.fill(BG_COLOR)
+        txt_surface = font.render(text, True, color)
+        width = max(200, txt_surface.get_width()+10)
+        input_box.w = width
+        screen.blit(txt_surface, (input_box.x+5, input_box.y+5))
+        pygame.draw.rect(screen, color, input_box, 2)
+
+        pygame.display.flip()
 
 def single_player_game():
     restart_game()
@@ -123,12 +208,16 @@ def single_player_game():
                     board[mouseY][mouseX] = player
                     if check_winner(player):
                         game_over = True
+                        player_data["rating"] += 25
+                        save_data(player_data)
                     elif is_draw():
                         game_over = True
                     else:
                         bot_move()
                         if check_winner('O'):
                             game_over = True
+                            player_data["rating"] -= 25
+                            save_data(player_data)
                     draw_figures()
 
             if event.type == pygame.KEYDOWN:
@@ -137,6 +226,13 @@ def single_player_game():
                     game_over = False
 
         pygame.display.update()
+
+def bot_move():
+    for row in range(BOARD_ROWS):
+        for col in range(BOARD_COLS):
+            if board[row][col] is None:
+                board[row][col] = 'O'
+                return
 
 def online_game():
     screen.fill(BG_COLOR)
@@ -195,19 +291,28 @@ def play_online_game(opponent_ip):
     game_over = False
     my_turn = True
 
+    opponent_data = {"avatar_url": "", "rating": 100}
+    opponent_avatar = None
+
     def handle_connection(conn):
-        nonlocal my_turn, game_over
+        nonlocal my_turn, game_over, opponent_data, opponent_avatar
         while True:
             data = conn.recv(BUFFER_SIZE).decode()
             if data:
-                row, col = map(int, data.split(','))
-                board[row][col] = 'O' if player == 'X' else 'X'
-                if check_winner('O' if player == 'X' else 'X'):
-                    game_over = True
-                elif is_draw():
-                    game_over = True
-                my_turn = True
-                draw_figures()
+                if data.startswith("DATA:"):
+                    opponent_data = json.loads(data[5:])
+                    opponent_avatar = load_avatar(opponent_data["avatar_url"])
+                else:
+                    row, col = map(int, data.split(','))
+                    board[row][col] = 'O' if player == 'X' else 'X'
+                    if check_winner('O' if player == 'X' else 'X'):
+                        game_over = True
+                        player_data["rating"] -= 25
+                        save_data(player_data)
+                    elif is_draw():
+                        game_over = True
+                    my_turn = True
+                    draw_figures()
             if game_over:
                 break
 
@@ -216,10 +321,12 @@ def play_online_game(opponent_ip):
         server_socket.bind((HOST, PORT))
         server_socket.listen(1)
         conn, addr = server_socket.accept()
+        conn.send(f"DATA:{json.dumps(player_data)}".encode())
         threading.Thread(target=handle_connection, args=(conn,)).start()
     else:
         client_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         client_socket.connect((opponent_ip, PORT))
+        client_socket.send(f"DATA:{json.dumps(player_data)}".encode())
         threading.Thread(target=handle_connection, args=(client_socket,)).start()
 
     while True:
@@ -235,6 +342,8 @@ def play_online_game(opponent_ip):
                     board[mouseY][mouseX] = player
                     if check_winner(player):
                         game_over = True
+                        player_data["rating"] += 25
+                        save_data(player_data)
                     elif is_draw():
                         game_over = True
                     draw_figures()
@@ -251,6 +360,22 @@ def play_online_game(opponent_ip):
                     restart_game()
                     game_over = False
                     my_turn = player == 'X'
+
+        screen.fill(BG_COLOR)
+        draw_lines()
+        draw_figures()
+
+        # Отображение аватарок и рейтинга
+        if avatar_image:
+            screen.blit(avatar_image, (10, HEIGHT - 40))
+        if opponent_avatar:
+            screen.blit(opponent_avatar, (WIDTH - 60, HEIGHT - 40))
+
+        font = pygame.font.Font(None, 24)
+        my_rating_text = font.render(f"{player_data['rating']} 🏆", True, LINE_COLOR)
+        screen.blit(my_rating_text, (70, HEIGHT - 30))
+        opponent_rating_text = font.render(f"{opponent_data['rating']} 🏆", True, LINE_COLOR)
+        screen.blit(opponent_rating_text, (WIDTH - 120, HEIGHT - 30))
 
         pygame.display.update()
 
